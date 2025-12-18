@@ -24,10 +24,6 @@ if uploaded_person and uploaded_cloth:
         transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5))
     ])
 
-    # IMPORTANT:
-    # This GMM implementation expects *RGB only* (input_nc=3)
-    # No pose or parsing channels are used in this architecture.
-
     person = transform(person_img).unsqueeze(0)
     cloth = transform(cloth_img).unsqueeze(0)
 
@@ -47,7 +43,8 @@ if uploaded_person and uploaded_cloth:
         )
 
     output_path = "tryon_result.jpg"
-    save_image(warped, output_path)
+    # denormalize for saving
+    save_image((warped + 1) / 2, output_path)
 
     st.success("✅ Try-on image generated")
     st.image(output_path, caption="Try-On Result", use_column_width=True)
