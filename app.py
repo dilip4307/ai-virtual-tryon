@@ -12,36 +12,19 @@ st.title("🛍️ AI-Powered Virtual Try-On System")
 uploaded_person = st.file_uploader("Upload person image", type=["jpg", "png"])
 uploaded_cloth = st.file_uploader("Upload clothing image", type=["jpg", "png"])
 
-# function to resize image with aspect ratio
-def resize_with_aspect(img, target_height, target_width):
-    orig_w, orig_h = img.size
-    ratio = min(target_width / orig_w, target_height / orig_h)
-    new_w = int(orig_w * ratio)
-    new_h = int(orig_h * ratio)
-    img_resized = img.resize((new_w, new_h), Image.ANTIALIAS)
-
-    # pad to target size
-    new_img = Image.new("RGB", (target_width, target_height), (0, 0, 0))
-    paste_x = (target_width - new_w) // 2
-    paste_y = (target_height - new_h) // 2
-    new_img.paste(img_resized, (paste_x, paste_y))
-    return new_img
-
 if uploaded_person and uploaded_cloth:
     person_img = Image.open(uploaded_person).convert("RGB")
     cloth_img = Image.open(uploaded_cloth).convert("RGB")
 
-    # resize while keeping aspect ratio
-    person_img = resize_with_aspect(person_img, 256, 192)
-    cloth_img = resize_with_aspect(cloth_img, 256, 192)
-
     st.image([person_img, cloth_img], caption=["Person", "Cloth"], width=200)
 
+    # transform: only convert to tensor & normalize
     transform = transforms.Compose([
         transforms.ToTensor(),
         transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5))
     ])
 
+    # keep original size
     person = transform(person_img).unsqueeze(0)
     cloth = transform(cloth_img).unsqueeze(0)
 
