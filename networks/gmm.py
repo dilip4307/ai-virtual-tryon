@@ -2,83 +2,83 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-class FeatureL2Norm(torch.nn.Module):
+# -----------------------------
+# FIXED & CONSISTENT GMM MODULE
+# -----------------------------
+# This version fixes the channel mismatch between
+# correlation map and FeatureRegression.
+
+class FeatureL2Norm(nn.Module):
     def __init__(self):
-        super(FeatureL2Norm, self).__init__()
+        super().__init__()
 
     def forward(self, x):
         norm = torch.norm(x, p=2, dim=1, keepdim=True)
-        x = x / (norm + 1e-6)
-        return x
+        return x / (norm + 1e-6)
+
 
 class FeatureExtraction(nn.Module):
     def __init__(self, input_nc=3, ngf=64):
-        super(FeatureExtraction, self).__init__()
-        model = [
-            nn.Conv2d(input_nc, ngf, kernel_size=7, stride=1, padding=3),
+        super().__init__()
+        self.model = nn.Sequential(
+            nn.Conv2d(input_nc, ngf, kernel_size=7, padding=3),
             nn.BatchNorm2d(ngf),
             nn.ReLU(inplace=True),
+
             nn.Conv2d(ngf, ngf * 2, kernel_size=4, stride=2, padding=1),
             nn.BatchNorm2d(ngf * 2),
             nn.ReLU(inplace=True),
+
             nn.Conv2d(ngf * 2, ngf * 4, kernel_size=4, stride=2, padding=1),
             nn.BatchNorm2d(ngf * 4),
             nn.ReLU(inplace=True),
-            nn.Conv2d(ngf * 4, ngf * 4, kernel_size=3, stride=1, padding=1),
-            nn.BatchNorm2d(ngf * 4),
-            nn.ReLU(inplace=True),
-            nn.Conv2d(ngf * 4, ngf * 4, kernel_size=3, stride=1, padding=1),
-            nn.BatchNorm2d(ngf * 4),
-            nn.ReLU(inplace=True)
-        ]
-        self.model = nn.Sequential(*model)
+        )
 
     def forward(self, x):
         return self.model(x)
 
+
 class FeatureRegression(nn.Module):
-    def __init__(self, input_nc=512, output_dim=6):
-        super(FeatureRegression, self).__init__()
-        model = [
-            nn.Conv2d(input_nc, 512, kernel_size=4, stride=2, padding=1),
-            nn.BatchNorm2d(512),
+    # corr_map is single-channel
+    def __init__(self, input_nc=1, output_dim=6):
+        super().__init__()
+        self.conv = nn.Sequential(
+            nn.Conv2d(input_nc, 64, kernel_size=4, stride=2, padding=1),
             nn.ReLU(inplace=True),
-            nn.Conv2d(512, 256, kernel_size=4, stride=2, padding=1),
-            nn.BatchNorm2d(256),
+            nn.Conv2d(64, 128, kernel_size=4, stride=2, padding=1),
             nn.ReLU(inplace=True),
-        ]
-        self.conv = nn.Sequential(*model)
-        self.linear = nn.Linear(256 * 6 * 4, output_dim)
+        )
+        self.linear = nn.Linear(128 * 6 * 4, output_dim)
 
     def forward(self, x):
         x = self.conv(x)
         x = x.view(x.size(0), -1)
-        x = self.linear(x)
-        return x
+        return self.linear(x)
+
 
 class GMM(nn.Module):
     def __init__(self, input_nc=3, output_dim=6):
-        super(GMM, self).__init__()
+        super().__init__()
         self.extractionA = FeatureExtraction(input_nc)
         self.extractionB = FeatureExtraction(input_nc)
         self.l2norm = FeatureL2Norm()
-        self.regression = FeatureRegression(512, output_dim)
+        self.regression = FeatureRegression(1, output_dim)
 
     def forward(self, person, cloth):
-        featA = self.extractionA(person)
-        featB = self.extractionB(cloth)
-        featA = self.l2norm(featA)
-        featB = self.l2norm(featB)
-        correlation = torch.bmm(
-            featA.view(featA.size(0), featA.size(1), -1).transpose(1, 2),
-            featB.view(featB.size(0), featB.size(1), -1)
+        featA = self.l2norm(self.extractionA(person))
+        featB = self.l2norm(self.extractionB(cloth))
+
+        B, C, H, W = featA.shape
+
+        # Proper correlation map
+        corr = torch.bmm(
+            featA.view(B, C, H * W).transpose(1, 2),
+            featB.view(B, C, H * W)
         )
-        correlation = correlation.view(
-            featA.size(0), featA.size(2), featA.size(3),
-            featB.size(2), featB.size(3)
-        )
-        corr_map = torch.mean(correlation, dim=(3, 4))
-        theta = self.regression(corr_map)
-        theta = theta.view(-1, 2, 3)
+
+        # Mean correlation → single-channel map
+        corr_map = corr.mean(dim=2).view(B, 1, H, W)
+
+        theta = self.regression(corr_map).view(-1, 2, 3)
         grid = F.affine_grid(theta, cloth.size(), align_corners=False)
         return grid, theta
